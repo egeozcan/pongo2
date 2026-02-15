@@ -509,7 +509,8 @@ func (p *Parser) parseNotExpression() (IEvaluator, error) {
 	return &expr, nil
 }
 
-func (p *Parser) ParseExpression() (IEvaluator, error) {
+// parseAndExpression handles "and" / "&&" (higher precedence than or).
+func (p *Parser) parseAndExpression() (IEvaluator, error) {
 	rexpr1, err := p.parseNotExpression()
 	if err != nil {
 		return nil, err
@@ -519,10 +520,55 @@ func (p *Parser) ParseExpression() (IEvaluator, error) {
 		expr1: rexpr1,
 	}
 
-	if p.PeekOne(TokenSymbol, "&&", "||") != nil || p.PeekOne(TokenKeyword, "and", "or") != nil {
+	for p.PeekOne(TokenSymbol, "&&") != nil || p.PeekOne(TokenKeyword, "and") != nil {
+		if exp.opToken != nil {
+			exp = &Expression{
+				expr1: exp,
+			}
+		}
+
 		op := p.Current()
 		p.Consume()
-		expr2, err := p.ParseExpression()
+
+		expr2, err := p.parseNotExpression()
+		if err != nil {
+			return nil, err
+		}
+		exp.expr2 = expr2
+		exp.opToken = op
+	}
+
+	if exp.expr2 == nil {
+		// Shortcut for faster evaluation
+		return exp.expr1, nil
+	}
+
+	return exp, nil
+}
+
+// ParseExpression handles "or" / "||" (lowest precedence among logical operators).
+// Precedence: or < and < not < relational < additive < multiplicative < power < factor
+func (p *Parser) ParseExpression() (IEvaluator, error) {
+	rexpr1, err := p.parseAndExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	exp := &Expression{
+		expr1: rexpr1,
+	}
+
+	for p.PeekOne(TokenSymbol, "||") != nil || p.PeekOne(TokenKeyword, "or") != nil {
+		if exp.opToken != nil {
+			exp = &Expression{
+				expr1: exp,
+			}
+		}
+
+		op := p.Current()
+		p.Consume()
+
+		expr2, err := p.parseAndExpression()
 		if err != nil {
 			return nil, err
 		}

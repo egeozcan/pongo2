@@ -211,3 +211,13 @@ combined associativity tests
 18
 4
 24
+
+and/or operator precedence (and binds tighter than or)
+True
+True
+True
+False
+True
+False
+True
+False

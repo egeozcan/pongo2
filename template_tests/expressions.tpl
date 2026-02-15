@@ -211,3 +211,13 @@ combined associativity tests
 {{ 12 * 3 / 2 }}
 {{ 2 - 3 + 4 - 5 + 6 }}
 {{ 24 / 4 * 2 / 3 * 6 }}
+
+and/or operator precedence (and binds tighter than or)
+{{ false and true or true }}
+{{ true or false and false }}
+{{ false or true and true }}
+{{ false or false and true }}
+{{ true and false or true and true }}
+{{ false and false or false and false }}
+{{ false or false or true }}
+{{ true and true and false }}

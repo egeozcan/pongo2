@@ -2389,3 +2389,85 @@ func TestBugResolveSubscriptPointerKey(t *testing.T) {
 		t.Errorf("Map subscript with pointer key: got %q, want %q (bug: pointer type not dereferenced)", result, "42")
 	}
 }
+
+// TestBugAndOrPrecedence tests that 'and' has higher precedence than 'or',
+// matching Python/Django behavior.
+func TestBugAndOrPrecedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		expected string
+	}{
+		{
+			name:     "false and true or true",
+			template: `{% if false and true or true %}yes{% else %}no{% endif %}`,
+			expected: "yes", // Python: (false and true) or true = true
+		},
+		{
+			name:     "true or false and false",
+			template: `{% if true or false and false %}yes{% else %}no{% endif %}`,
+			expected: "yes", // Python: true or (false and false) = true
+		},
+		{
+			name:     "false or true and true",
+			template: `{% if false or true and true %}yes{% else %}no{% endif %}`,
+			expected: "yes", // Python: false or (true and true) = true
+		},
+		{
+			name:     "false or false and true",
+			template: `{% if false or false and true %}yes{% else %}no{% endif %}`,
+			expected: "no", // Python: false or (false and true) = false
+		},
+		{
+			name:     "true and false or true and true",
+			template: `{% if true and false or true and true %}yes{% else %}no{% endif %}`,
+			expected: "yes", // Python: (true and false) or (true and true) = true
+		},
+		{
+			name:     "false and false or false and false",
+			template: `{% if false and false or false and false %}yes{% else %}no{% endif %}`,
+			expected: "no", // Python: (false and false) or (false and false) = false
+		},
+		{
+			name:     "chained or - left to right",
+			template: `{{ false or false or true }}`,
+			expected: "True",
+		},
+		{
+			name:     "chained and - left to right",
+			template: `{{ true and true and false }}`,
+			expected: "False",
+		},
+		{
+			name:     "symbolic operators",
+			template: `{% if false && true || true %}yes{% else %}no{% endif %}`,
+			expected: "yes",
+		},
+		{
+			name:     "and short-circuits on false value",
+			template: `{{ 0 and 42 }}`,
+			expected: "0", // Python: 0 and 42 = 0
+		},
+		{
+			name:     "or short-circuits on true value",
+			template: `{{ 42 or 0 }}`,
+			expected: "42", // Python: 42 or 0 = 42
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tpl, err := pongo2.FromString(tt.template)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			result, err := tpl.Execute(nil)
+			if err != nil {
+				t.Fatalf("execute error: %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
