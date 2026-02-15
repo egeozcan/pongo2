@@ -422,8 +422,9 @@ func (vr *variableResolver) resolveSubscript(
 		if sv.IsNil() {
 			return reflect.Value{}, true, nil
 		}
-		if sv.val.Type().AssignableTo(current.Type().Key()) {
-			return current.MapIndex(sv.val), false, nil
+		svResolved := sv.getResolvedValue()
+		if svResolved.IsValid() && svResolved.Type().AssignableTo(current.Type().Key()) {
+			return current.MapIndex(svResolved), false, nil
 		}
 		return reflect.Value{}, true, nil
 	default:

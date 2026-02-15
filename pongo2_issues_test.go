@@ -2362,3 +2362,30 @@ func (t *testSharedWriteTag) Execute(ctx *pongo2.ExecutionContext, writer pongo2
 	ctx.Shared["test_key"] = "test_value"
 	return nil
 }
+
+// TestBugResolveSubscriptPointerKey tests that map subscript access works
+// correctly when the key variable is a pointer type.
+// Bug: resolveSubscript() used sv.val.Type() (which may be a pointer type)
+// instead of the dereferenced type, causing map lookups with pointer keys
+// to silently return empty string.
+func TestBugResolveSubscriptPointerKey(t *testing.T) {
+	set := pongo2.NewSet("test", &pongo2.DummyLoader{})
+
+	key := "hello"
+	tpl, err := set.FromString("{{ m[k] }}")
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	result, err := tpl.Execute(pongo2.Context{
+		"m": map[string]int{"hello": 42},
+		"k": &key,
+	})
+	if err != nil {
+		t.Fatalf("Failed to execute template: %v", err)
+	}
+
+	if result != "42" {
+		t.Errorf("Map subscript with pointer key: got %q, want %q (bug: pointer type not dereferenced)", result, "42")
+	}
+}
