@@ -2325,3 +2325,40 @@ func TestBugExecuteBlocksWrongTemplateCheck(t *testing.T) {
 		t.Errorf("sidebar block: got %q, want %q", sidebar, "Base Sidebar")
 	}
 }
+
+// TestBugSharedContextNilPanic tests that the Shared context is properly
+// initialized and can be written to without panicking.
+// Bug: newExecutionContext() didn't initialize the Shared field, leaving it nil.
+// Writing to ctx.Shared panics with "assignment to entry in nil map".
+func TestBugSharedContextNilPanic(t *testing.T) {
+	set := pongo2.NewSet("test_shared", &pongo2.DummyLoader{})
+	if err := set.RegisterTag("test_shared_write", func(doc *pongo2.Parser, start *pongo2.Token, arguments *pongo2.Parser) (pongo2.INodeTag, error) {
+		return &testSharedWriteTag{}, nil
+	}); err != nil {
+		t.Fatalf("Failed to register tag: %v", err)
+	}
+
+	tpl, err := set.FromString("{% test_shared_write %}")
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Writing to Shared context panicked: %v (bug: Shared not initialized)", r)
+			}
+		}()
+		_, err = tpl.Execute(pongo2.Context{})
+		if err != nil {
+			t.Fatalf("Failed to execute template: %v", err)
+		}
+	}()
+}
+
+type testSharedWriteTag struct{}
+
+func (t *testSharedWriteTag) Execute(ctx *pongo2.ExecutionContext, writer pongo2.TemplateWriter) error {
+	ctx.Shared["test_key"] = "test_value"
+	return nil
+}
