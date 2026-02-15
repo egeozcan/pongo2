@@ -2278,3 +2278,50 @@ func TestCenterPaddingMatchesPython(t *testing.T) {
 		}
 	}
 }
+
+// TestBugExecuteBlocksWrongTemplateCheck tests that ExecuteBlocks() properly
+// finds blocks defined in parent templates when the child doesn't override them.
+// Bug: ExecuteBlocks() checked tpl.blocks instead of parent.blocks when walking
+// the inheritance chain, causing blocks only defined in parent templates to be
+// silently omitted from the result.
+//
+// The bug manifests when requesting blocks that exist ONLY in a parent template
+// and the child template has NO overlapping blocks in the request list.
+func TestBugExecuteBlocksWrongTemplateCheck(t *testing.T) {
+	memFS := fstest.MapFS{
+		"base.tpl": &fstest.MapFile{
+			Data: []byte(`{% block header %}Base Header{% endblock %}{% block sidebar %}Base Sidebar{% endblock %}{% block content %}Base Content{% endblock %}`),
+		},
+		"child.tpl": &fstest.MapFile{
+			Data: []byte(`{% extends "base.tpl" %}{% block content %}Child Content{% endblock %}`),
+		},
+	}
+
+	loader := pongo2.NewFSLoader(memFS)
+	set := pongo2.NewSet("test", loader)
+
+	tpl, err := set.FromFile("child.tpl")
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	// Request only blocks that exist in the PARENT but NOT in the child.
+	// The child only overrides "content", so "header" and "sidebar" are
+	// only in base.tpl. The bug causes these to be silently omitted.
+	blocks, err := tpl.ExecuteBlocks(pongo2.Context{}, []string{"header", "sidebar"})
+	if err != nil {
+		t.Fatalf("Failed to execute blocks: %v", err)
+	}
+
+	if header, ok := blocks["header"]; !ok {
+		t.Error("Expected 'header' block in result, but it was not found (bug: wrong template checked in ExecuteBlocks)")
+	} else if header != "Base Header" {
+		t.Errorf("header block: got %q, want %q", header, "Base Header")
+	}
+
+	if sidebar, ok := blocks["sidebar"]; !ok {
+		t.Error("Expected 'sidebar' block in result, but it was not found (bug: wrong template checked in ExecuteBlocks)")
+	} else if sidebar != "Base Sidebar" {
+		t.Errorf("sidebar block: got %q, want %q", sidebar, "Base Sidebar")
+	}
+}

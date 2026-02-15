@@ -380,7 +380,7 @@ func (tpl *Template) ExecuteBlocks(context Context, blocks []string) (map[string
 	for parent != nil {
 		// We only want to execute the template if it has a block we want
 		for _, block := range blocks {
-			if _, ok := tpl.blocks[block]; ok {
+			if _, ok := parent.blocks[block]; ok {
 				parents = append(parents, parent)
 				break
 			}
