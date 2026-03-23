@@ -112,6 +112,7 @@ func newExecutionContext(tpl *Template, ctx Context) *ExecutionContext {
 
 		Public:     ctx,
 		Private:    privateCtx,
+		Shared:     make(Context),
 		Autoescape: tpl.set.autoescape,
 		tagState:   make(map[any]any),
 	}

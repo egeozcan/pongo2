@@ -2278,3 +2278,196 @@ func TestCenterPaddingMatchesPython(t *testing.T) {
 		}
 	}
 }
+
+// TestBugExecuteBlocksWrongTemplateCheck tests that ExecuteBlocks() properly
+// finds blocks defined in parent templates when the child doesn't override them.
+// Bug: ExecuteBlocks() checked tpl.blocks instead of parent.blocks when walking
+// the inheritance chain, causing blocks only defined in parent templates to be
+// silently omitted from the result.
+//
+// The bug manifests when requesting blocks that exist ONLY in a parent template
+// and the child template has NO overlapping blocks in the request list.
+func TestBugExecuteBlocksWrongTemplateCheck(t *testing.T) {
+	memFS := fstest.MapFS{
+		"base.tpl": &fstest.MapFile{
+			Data: []byte(`{% block header %}Base Header{% endblock %}{% block sidebar %}Base Sidebar{% endblock %}{% block content %}Base Content{% endblock %}`),
+		},
+		"child.tpl": &fstest.MapFile{
+			Data: []byte(`{% extends "base.tpl" %}{% block content %}Child Content{% endblock %}`),
+		},
+	}
+
+	loader := pongo2.NewFSLoader(memFS)
+	set := pongo2.NewSet("test", loader)
+
+	tpl, err := set.FromFile("child.tpl")
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	// Request only blocks that exist in the PARENT but NOT in the child.
+	// The child only overrides "content", so "header" and "sidebar" are
+	// only in base.tpl. The bug causes these to be silently omitted.
+	blocks, err := tpl.ExecuteBlocks(pongo2.Context{}, []string{"header", "sidebar"})
+	if err != nil {
+		t.Fatalf("Failed to execute blocks: %v", err)
+	}
+
+	if header, ok := blocks["header"]; !ok {
+		t.Error("Expected 'header' block in result, but it was not found (bug: wrong template checked in ExecuteBlocks)")
+	} else if header != "Base Header" {
+		t.Errorf("header block: got %q, want %q", header, "Base Header")
+	}
+
+	if sidebar, ok := blocks["sidebar"]; !ok {
+		t.Error("Expected 'sidebar' block in result, but it was not found (bug: wrong template checked in ExecuteBlocks)")
+	} else if sidebar != "Base Sidebar" {
+		t.Errorf("sidebar block: got %q, want %q", sidebar, "Base Sidebar")
+	}
+}
+
+// TestBugSharedContextNilPanic tests that the Shared context is properly
+// initialized and can be written to without panicking.
+// Bug: newExecutionContext() didn't initialize the Shared field, leaving it nil.
+// Writing to ctx.Shared panics with "assignment to entry in nil map".
+func TestBugSharedContextNilPanic(t *testing.T) {
+	set := pongo2.NewSet("test_shared", &pongo2.DummyLoader{})
+	if err := set.RegisterTag("test_shared_write", func(doc *pongo2.Parser, start *pongo2.Token, arguments *pongo2.Parser) (pongo2.INodeTag, error) {
+		return &testSharedWriteTag{}, nil
+	}); err != nil {
+		t.Fatalf("Failed to register tag: %v", err)
+	}
+
+	tpl, err := set.FromString("{% test_shared_write %}")
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Writing to Shared context panicked: %v (bug: Shared not initialized)", r)
+			}
+		}()
+		_, err = tpl.Execute(pongo2.Context{})
+		if err != nil {
+			t.Fatalf("Failed to execute template: %v", err)
+		}
+	}()
+}
+
+type testSharedWriteTag struct{}
+
+func (t *testSharedWriteTag) Execute(ctx *pongo2.ExecutionContext, writer pongo2.TemplateWriter) error {
+	ctx.Shared["test_key"] = "test_value"
+	return nil
+}
+
+// TestBugResolveSubscriptPointerKey tests that map subscript access works
+// correctly when the key variable is a pointer type.
+// Bug: resolveSubscript() used sv.val.Type() (which may be a pointer type)
+// instead of the dereferenced type, causing map lookups with pointer keys
+// to silently return empty string.
+func TestBugResolveSubscriptPointerKey(t *testing.T) {
+	set := pongo2.NewSet("test", &pongo2.DummyLoader{})
+
+	key := "hello"
+	tpl, err := set.FromString("{{ m[k] }}")
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	result, err := tpl.Execute(pongo2.Context{
+		"m": map[string]int{"hello": 42},
+		"k": &key,
+	})
+	if err != nil {
+		t.Fatalf("Failed to execute template: %v", err)
+	}
+
+	if result != "42" {
+		t.Errorf("Map subscript with pointer key: got %q, want %q (bug: pointer type not dereferenced)", result, "42")
+	}
+}
+
+// TestBugAndOrPrecedence tests that 'and' has higher precedence than 'or',
+// matching Python/Django behavior.
+func TestBugAndOrPrecedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		expected string
+	}{
+		{
+			name:     "false and true or true",
+			template: `{% if false and true or true %}yes{% else %}no{% endif %}`,
+			expected: "yes", // Python: (false and true) or true = true
+		},
+		{
+			name:     "true or false and false",
+			template: `{% if true or false and false %}yes{% else %}no{% endif %}`,
+			expected: "yes", // Python: true or (false and false) = true
+		},
+		{
+			name:     "false or true and true",
+			template: `{% if false or true and true %}yes{% else %}no{% endif %}`,
+			expected: "yes", // Python: false or (true and true) = true
+		},
+		{
+			name:     "false or false and true",
+			template: `{% if false or false and true %}yes{% else %}no{% endif %}`,
+			expected: "no", // Python: false or (false and true) = false
+		},
+		{
+			name:     "true and false or true and true",
+			template: `{% if true and false or true and true %}yes{% else %}no{% endif %}`,
+			expected: "yes", // Python: (true and false) or (true and true) = true
+		},
+		{
+			name:     "false and false or false and false",
+			template: `{% if false and false or false and false %}yes{% else %}no{% endif %}`,
+			expected: "no", // Python: (false and false) or (false and false) = false
+		},
+		{
+			name:     "chained or - left to right",
+			template: `{{ false or false or true }}`,
+			expected: "True",
+		},
+		{
+			name:     "chained and - left to right",
+			template: `{{ true and true and false }}`,
+			expected: "False",
+		},
+		{
+			name:     "symbolic operators",
+			template: `{% if false && true || true %}yes{% else %}no{% endif %}`,
+			expected: "yes",
+		},
+		{
+			name:     "and short-circuits on false value",
+			template: `{{ 0 and 42 }}`,
+			expected: "0", // Python: 0 and 42 = 0
+		},
+		{
+			name:     "or short-circuits on true value",
+			template: `{{ 42 or 0 }}`,
+			expected: "42", // Python: 42 or 0 = 42
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tpl, err := pongo2.FromString(tt.template)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			result, err := tpl.Execute(nil)
+			if err != nil {
+				t.Fatalf("execute error: %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
